@@ -27,6 +27,8 @@ from playwright.async_api import BrowserContext, Page
 
 import config
 from tools import utils
+import time
+from datetime import datetime, timedelta
 
 from .exception import DataFetchError
 from .field import SearchType
@@ -545,7 +547,7 @@ class WeiboClient:
         retry_delay: float = 5.0,
     ) -> List[Dict]:
         """
-        获取指定用户下的所有发过的帖子，该方法会一直查找一个用户下的所有帖子信息
+        获取指定用户下的所有发过的帖子，该方法会一直查找一个用户下的所有帖子信息（限制为过去7天内的帖子）
         Args:
             creator_id:
             container_id:
@@ -563,7 +565,16 @@ class WeiboClient:
         since_id: str = "0"
         crawler_total_count = 0
         is_first_request = True  # 标记是否为第一次请求
-        
+        seen_since_ids = {since_id}
+        seen_note_ids = set()
+        consecutive_no_new_pages = 0
+        max_consecutive_no_new_pages = 3
+
+        # 七天前的unix时间戳
+        now_ts = int(time.time())
+        seven_days_ago = datetime.now() - timedelta(days=7)
+        seven_days_ago_ts = int(seven_days_ago.timestamp())
+
         while notes_has_more:
             # 第一次请求前增加延迟，避免在获取 creator 信息后立即请求笔记列表
             if is_first_request:
@@ -600,6 +611,23 @@ class WeiboClient:
                     else:
                         # 其他错误直接抛出
                         raise
+                except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.TimeoutException, httpx.ReadError) as e:
+                    # 瞬时网络错误：服务器断开、连接超时等，等待后重试
+                    retry_count += 1
+                    if retry_count <= max_retries:
+                        wait_time = retry_delay * retry_count
+                        utils.logger.warning(
+                            f"[WeiboClient.get_all_notes_by_creator_id] "
+                            f"网络/连接错误 ({e!s})，等待 {wait_time} 秒后重试 ({retry_count}/{max_retries})"
+                        )
+                        await asyncio.sleep(wait_time)
+                    else:
+                        utils.logger.error(
+                            f"[WeiboClient.get_all_notes_by_creator_id] "
+                            f"达到最大重试次数 ({max_retries})，停止获取数据: {e}"
+                        )
+                        notes_has_more = False
+                        break
                 except Exception as e:
                     utils.logger.error(
                         f"[WeiboClient.get_all_notes_by_creator_id] "
@@ -626,25 +654,99 @@ class WeiboClient:
             if "cards" not in notes_res:
                 utils.logger.info(f"[WeiboClient.get_all_notes_by_creator] No 'cards' key found in response: {notes_res}")
                 break
-            # 如果游标未推进（常见于接口返回异常/被限制/参数不生效），停止以避免重复执行 callback
+            # 游标未推进时结束分页，避免重复请求同一页、产生重复数据
             if new_since_id == prev_since_id:
-                utils.logger.warning(
+                utils.logger.info(
                     f"[WeiboClient.get_all_notes_by_creator_id] since_id 未推进（仍为 {new_since_id}），"
-                    f"为避免重复抓取同一页，停止获取。creator_id={creator_id}"
+                    f"视为已到末页，结束分页。creator_id={creator_id}"
                 )
-                break
+                notes_has_more = False
+            # 游标循环（例如 A->B->A）时结束分页，避免在单用户上无限循环
+            elif new_since_id in seen_since_ids:
+                utils.logger.info(
+                    f"[WeiboClient.get_all_notes_by_creator_id] since_id 出现循环（{new_since_id}），"
+                    f"结束分页。creator_id={creator_id}"
+                )
+                notes_has_more = False
+            seen_since_ids.add(new_since_id)
+
+            if new_since_id in {"0", "", "None", "null"}:
+                notes_has_more = False
             since_id = new_since_id
 
             notes = notes_res["cards"]
             utils.logger.info(f"[WeiboClient.get_all_notes_by_creator] got user_id:{creator_id} notes len : {len(notes)}")
             notes = [note for note in notes if note.get("card_type") == 9]
-            if callback:
-                await callback(notes)
+
+            # 只保留过去七天的帖子，按发布时间过滤
+            filtered_notes = []
+            for note in notes:
+                mblog = note.get("mblog", {})
+                created_at = mblog.get("created_at", "")
+                if not created_at:
+                    continue
+                # 微博返回的 created_at 可能为 "Wed May 29 23:59:22 +0800 2024"，需要转换为时间戳
+                try:
+                    # 解析微博标准时间字符串
+                    created_at_ts = int(datetime.strptime(created_at, '%a %b %d %H:%M:%S %z %Y').timestamp())
+                    if created_at_ts >= seven_days_ago_ts:
+                        filtered_notes.append(note)
+                except Exception as e:
+                    utils.logger.warning(f"[WeiboClient.get_all_notes_by_creator_id] 解析微博 created_at 字段失败: {created_at} - {e}")
+
+            # 去重：同一用户分页中重复返回的微博不再重复处理，避免重复抓取/写入
+            new_notes = []
+            for note in filtered_notes:
+                note_id = str(note.get("mblog", {}).get("id", "")).strip()
+                if not note_id:
+                    continue
+                if note_id in seen_note_ids:
+                    continue
+                seen_note_ids.add(note_id)
+                new_notes.append(note)
+
+            if not new_notes:
+                consecutive_no_new_pages += 1
+                if consecutive_no_new_pages >= max_consecutive_no_new_pages:
+                    utils.logger.info(
+                        f"[WeiboClient.get_all_notes_by_creator_id] 连续 {max_consecutive_no_new_pages} 页无新增微博，"
+                        f"结束分页。creator_id={creator_id}"
+                    )
+                    notes_has_more = False
+            else:
+                consecutive_no_new_pages = 0
+
+            if callback and new_notes:
+                await callback(new_notes)
             # 添加随机延迟，使请求更自然，降低触发反爬虫的概率
             random_delay = random.uniform(0, 1)  # 0-1秒随机延迟
             await asyncio.sleep(crawl_interval + random_delay)
-            result.extend(notes)
-            crawler_total_count += len(notes)
-            total = notes_res.get("cardlistInfo", {}).get("total", 0)
-            notes_has_more = total > crawler_total_count
+            result.extend(new_notes)
+            crawler_total_count += len(new_notes)
+            total_raw = notes_res.get("cardlistInfo", {}).get("total", 0)
+
+            # 检查抓到的最早一条微博是否超出七天，提前终止分页
+            has_exceed_7_days = False
+            for note in notes:
+                mblog = note.get("mblog", {})
+                created_at = mblog.get("created_at", "")
+                try:
+                    created_at_ts = int(datetime.strptime(created_at, '%a %b %d %H:%M:%S %z %Y').timestamp())
+                    if created_at_ts < seven_days_ago_ts:
+                        has_exceed_7_days = True
+                        break
+                except Exception:
+                    continue
+            if has_exceed_7_days:
+                utils.logger.info(
+                    f"[WeiboClient.get_all_notes_by_creator_id] 已抓取到七天前的微博，终止分页。creator_id={creator_id}"
+                )
+                break
+
+            try:
+                total = int(total_raw)
+            except (TypeError, ValueError):
+                total = 0
+            # 不要覆盖前面触发的终止条件（如游标回环/无新增数据）
+            notes_has_more = notes_has_more and (total > crawler_total_count)
         return result

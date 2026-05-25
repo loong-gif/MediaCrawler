@@ -27,11 +27,16 @@ mysql_db_config = {
 }
 
 # postgres config
+# 若报错 no pg_hba.conf entry for host "x.x.x.x"：在 PostgreSQL 服务器上编辑 pg_hba.conf，
+# 添加一行允许该客户端 IP，例如: host  bili  loong  192.168.2.116/32  md5
+# 然后执行: pg_ctl reload 或 systemctl reload postgresql
 POSTGRES_DB_USER = os.getenv("POSTGRES_DB_USER", "loong")
 POSTGRES_DB_PWD = os.getenv("POSTGRES_DB_PWD", "468465")
 POSTGRES_DB_HOST = os.getenv("POSTGRES_DB_HOST", "192.168.2.197")
 POSTGRES_DB_PORT = os.getenv("POSTGRES_DB_PORT", "5432")
 POSTGRES_DB_NAME = os.getenv("POSTGRES_DB_NAME", "bili")
+# 若服务器要求 SSL，可设置 POSTGRES_SSLMODE=require（或 disable/allow/prefer/verify-full 等）
+POSTGRES_SSLMODE = os.getenv("POSTGRES_SSLMODE", "")
 
 postgres_db_config = {
     "user": POSTGRES_DB_USER,
@@ -39,6 +44,7 @@ postgres_db_config = {
     "host": POSTGRES_DB_HOST,
     "port": int(POSTGRES_DB_PORT) if isinstance(POSTGRES_DB_PORT, str) else POSTGRES_DB_PORT,
     "db_name": POSTGRES_DB_NAME,
+    "sslmode": POSTGRES_SSLMODE.strip() or None,
 }
 
 # redis config

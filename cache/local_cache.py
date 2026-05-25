@@ -114,9 +114,13 @@ class ExpiringLocalCache(AbstractCache):
         开启定时清理任务
         :return:
         """
-        while True:
-            self._clear()
-            await asyncio.sleep(self._cron_interval)
+        try:
+            while True:
+                self._clear()
+                await asyncio.sleep(self._cron_interval)
+        except asyncio.CancelledError:
+            # 事件循环关闭时任务会被取消，正常退出
+            pass
 
 
 if __name__ == '__main__':

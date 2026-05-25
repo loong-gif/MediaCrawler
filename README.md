@@ -219,7 +219,7 @@ uv run main.py --platform xhs --lt qrcode --type search --save_data_option sqlit
 # 初始化 MySQL 数据库
 uv run main.py --init_db mysql
 # 使用 MySQL 存储数据（为适配历史更新，db参数进行沿用）
-uv run main.py --platform xhs --lt qrcode --type search --save_data_option db
+uv run main.py --platform wb --lt cookie --type creator --save_data_option db
 ```
 
 

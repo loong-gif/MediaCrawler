@@ -99,6 +99,7 @@ def cleanup():
 
 if __name__ == "__main__":
     try:
-        asyncio.get_event_loop().run_until_complete(main())
+        # 使用 asyncio.run() 以便在退出时正确取消后台任务，避免 "Task was destroyed but it is pending"
+        asyncio.run(main())
     finally:
         cleanup()
