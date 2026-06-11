@@ -237,6 +237,11 @@ class CDPBrowserManager:
                     data = response.json()
                     ws_url = data.get("webSocketDebuggerUrl")
                     if ws_url:
+                        # Replace 0.0.0.0 with localhost — Chrome launched with
+                        # --remote-debugging-address=0.0.0.0 may advertise 0.0.0.0
+                        # in the WebSocket URL, but 0.0.0.0 is not a valid outgoing
+                        # connection target and causes ECONNREFUSED.
+                        ws_url = ws_url.replace("ws://0.0.0.0:", "ws://localhost:")
                         utils.logger.info(
                             f"[CDPBrowserManager] Got browser WebSocket URL: {ws_url}"
                         )
@@ -251,27 +256,46 @@ class CDPBrowserManager:
 
     async def _connect_via_cdp(self, playwright: Playwright):
         """
-        Connect to browser via CDP
+        Connect to browser via CDP.
+
+        Retries up to 3 times with a short back-off because
+        wait_for_browser_ready() succeeds as soon as Chrome binds the TCP port,
+        but Chrome's DevTools WebSocket endpoint may not be ready yet at that
+        point, causing an immediate ECONNREFUSED on the first connect attempt.
         """
-        try:
-            # Get correct WebSocket URL
-            ws_url = await self._get_browser_websocket_url(self.debug_port)
-            utils.logger.info(f"[CDPBrowserManager] Connecting to browser via CDP: {ws_url}")
-
-            # Use Playwright's connectOverCDP method to connect
-            self.browser = await playwright.chromium.connect_over_cdp(ws_url)
-
-            if self.browser.is_connected():
-                utils.logger.info("[CDPBrowserManager] Successfully connected to browser")
+        max_retries = 3
+        retry_delay = 2.0
+        last_error: Exception = RuntimeError("CDP connection failed")
+        for attempt in range(1, max_retries + 1):
+            try:
+                # Get correct WebSocket URL
+                ws_url = await self._get_browser_websocket_url(self.debug_port)
                 utils.logger.info(
-                    f"[CDPBrowserManager] Browser contexts count: {len(self.browser.contexts)}"
+                    f"[CDPBrowserManager] Connecting to browser via CDP (attempt {attempt}/{max_retries}): {ws_url}"
                 )
-            else:
-                raise RuntimeError("CDP connection failed")
 
-        except Exception as e:
-            utils.logger.error(f"[CDPBrowserManager] CDP connection failed: {e}")
-            raise
+                # Use Playwright's connectOverCDP method to connect
+                self.browser = await playwright.chromium.connect_over_cdp(ws_url)
+
+                if self.browser.is_connected():
+                    utils.logger.info("[CDPBrowserManager] Successfully connected to browser")
+                    utils.logger.info(
+                        f"[CDPBrowserManager] Browser contexts count: {len(self.browser.contexts)}"
+                    )
+                    return
+                else:
+                    raise RuntimeError("CDP connection failed")
+
+            except Exception as e:
+                last_error = e
+                utils.logger.warning(
+                    f"[CDPBrowserManager] CDP connection attempt {attempt}/{max_retries} failed: {e}"
+                )
+                if attempt < max_retries:
+                    await asyncio.sleep(retry_delay)
+
+        utils.logger.error(f"[CDPBrowserManager] CDP connection failed: {last_error}")
+        raise last_error
 
     async def _create_browser_context(
         self, playwright_proxy: Optional[Dict] = None, user_agent: Optional[str] = None
