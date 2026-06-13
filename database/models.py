@@ -248,6 +248,7 @@ class WeiboCreator(Base):
     follows = Column(Text)
     fans = Column(Text)
     tag_list = Column(Text)
+    note_count = Column(Integer, default=0)
 
 class XhsCreator(Base):
     __tablename__ = 'xhs_creator'

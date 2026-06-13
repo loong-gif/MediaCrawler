@@ -31,13 +31,19 @@ async def parse_cmd():
                         help='Number of start page / 起始页码', default=config.START_PAGE)
     parser.add_argument('--keywords', type=str,
                         help='Please input keywords / 请输入关键词', default=config.KEYWORDS)
+    parser.add_argument('--creator_ids', type=str,
+                        help='Weibo creator ids for one-off creator crawl / 微博创作者ID列表（逗号分隔，仅覆盖本次运行）',
+                        default="")
+    parser.add_argument('--weibo_creator_since_date', type=str,
+                        help='Weibo creator crawl cutoff date / 微博创作者抓取截止日期（YYYY-MM-DD 或 ISO8601）',
+                        default=config.WEIBO_CREATOR_SINCE_DATE)
     parser.add_argument('--get_comment', type=str2bool,
                         help='''Whether to crawl level one comment / 是否爬取一级评论, supported values case insensitive / 支持的值(不区分大小写) ('yes', 'true', 't', 'y', '1', 'no', 'false', 'f', 'n', '0')''', default=config.ENABLE_GET_COMMENTS)
     parser.add_argument('--get_sub_comment', type=str2bool,
                         help=''''Whether to crawl level two comment / 是否爬取二级评论, supported values case insensitive / 支持的值(不区分大小写) ('yes', 'true', 't', 'y', '1', 'no', 'false', 'f', 'n', '0')''', default=config.ENABLE_GET_SUB_COMMENTS)
     parser.add_argument('--save_data_option', type=str,
-                        help='Where to save the data / 数据保存方式 (csv=CSV文件 | db=MySQL数据库 | json=JSON文件 | sqlite=SQLite数据库)', 
-                        choices=['csv', 'db', 'json', 'sqlite'], default=config.SAVE_DATA_OPTION)
+                        help='Where to save the data / 数据保存方式 (csv=CSV文件 | db=数据库 | json=JSON文件 | sqlite=SQLite数据库 | supabase=Supabase Postgres[微博专用])', 
+                        choices=['csv', 'db', 'json', 'sqlite', 'supabase'], default=config.SAVE_DATA_OPTION)
     parser.add_argument('--init_db', type=str,
                         help='Initialize database schema / 初始化数据库表结构 (sqlite | mysql | postgres | db)',
                         choices=['sqlite', 'mysql', 'postgres', 'db'], default=None)
@@ -54,6 +60,13 @@ async def parse_cmd():
     config.CRAWLER_TYPE = args.type
     config.START_PAGE = args.start
     config.KEYWORDS = args.keywords
+    if args.creator_ids.strip():
+        config.WEIBO_CREATOR_ID_LIST = [
+            creator_id.strip()
+            for creator_id in args.creator_ids.split(",")
+            if creator_id.strip()
+        ]
+    config.WEIBO_CREATOR_SINCE_DATE = args.weibo_creator_since_date
     config.ENABLE_GET_COMMENTS = args.get_comment
     config.ENABLE_GET_SUB_COMMENTS = args.get_sub_comment
     config.SAVE_DATA_OPTION = args.save_data_option

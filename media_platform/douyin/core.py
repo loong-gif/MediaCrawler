@@ -34,6 +34,7 @@ from .client import DouYinClient
 from .exception import DataFetchError
 from .field import PublishTimeType
 from .login import DouYinLogin
+from tools.observability import tracer as otel_tracer
 
 
 class DouYinCrawler(AbstractCrawler):
@@ -103,7 +104,9 @@ class DouYinCrawler(AbstractCrawler):
             utils.logger.info("[DouYinCrawler.start] Douyin Crawler finished ...")
 
     async def search(self) -> None:
-        utils.logger.info("[DouYinCrawler.search] Begin search douyin keywords")
+        with otel_tracer.start_as_current_span("douyin.search", attributes={"crawler.type": "search"}) as span:
+            span.set_attribute("keywords", config.KEYWORDS)
+            utils.logger.info("[DouYinCrawler.search] Begin search douyin keywords")
         dy_limit_count = 10  # douyin limit page fixed value
         if config.CRAWLER_MAX_NOTES_COUNT < dy_limit_count:
             config.CRAWLER_MAX_NOTES_COUNT = dy_limit_count
@@ -155,7 +158,8 @@ class DouYinCrawler(AbstractCrawler):
 
     async def get_specified_awemes(self):
         """Get the information and comments of the specified post"""
-        semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
+        with otel_tracer.start_as_current_span("douyin.get_specified_awemes", attributes={"crawler.type": "detail"}):
+            semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY_NUM)
         task_list = [self.get_aweme_detail(aweme_id=aweme_id, semaphore=semaphore) for aweme_id in config.DY_SPECIFIED_ID_LIST]
         aweme_details = await asyncio.gather(*task_list)
         for aweme_detail in aweme_details:
@@ -220,7 +224,8 @@ class DouYinCrawler(AbstractCrawler):
         """
         Get the information and videos of the specified creator
         """
-        utils.logger.info("[DouYinCrawler.get_creators_and_videos] Begin get douyin creators")
+        with otel_tracer.start_as_current_span("douyin.get_creators_and_videos", attributes={"crawler.type": "creator"}):
+            utils.logger.info("[DouYinCrawler.get_creators_and_videos] Begin get douyin creators")
         for user_id in config.DY_CREATOR_ID_LIST:
             creator_info: Dict = await self.dy_client.get_user_info(user_id)
             if creator_info:

@@ -43,17 +43,23 @@ class CDPBrowserManager:
         启动浏览器并通过CDP连接
         """
         try:
-            # 1. 检测浏览器路径
-            browser_path = await self._get_browser_path()
+            if config.CDP_REMOTE_WS_URL.strip():
+                utils.logger.info(
+                    f"[CDPBrowserManager] 使用外部CDP地址: {config.CDP_REMOTE_WS_URL.strip()}"
+                )
+                await self._connect_via_cdp(playwright, ws_url=config.CDP_REMOTE_WS_URL.strip())
+            else:
+                # 1. 检测浏览器路径
+                browser_path = await self._get_browser_path()
 
-            # 2. 获取可用端口
-            self.debug_port = self.launcher.find_available_port(config.CDP_DEBUG_PORT)
+                # 2. 获取可用端口
+                self.debug_port = self.launcher.find_available_port(config.CDP_DEBUG_PORT)
 
-            # 3. 启动浏览器
-            await self._launch_browser(browser_path, headless)
+                # 3. 启动浏览器
+                await self._launch_browser(browser_path, headless)
 
-            # 4. 通过CDP连接
-            await self._connect_via_cdp(playwright)
+                # 4. 通过CDP连接
+                await self._connect_via_cdp(playwright)
 
             # 5. 创建浏览器上下文
             browser_context = await self._create_browser_context(
@@ -184,13 +190,16 @@ class CDPBrowserManager:
             utils.logger.error(f"[CDPBrowserManager] 获取WebSocket URL失败: {e}")
             raise
 
-    async def _connect_via_cdp(self, playwright: Playwright):
+    async def _connect_via_cdp(self, playwright: Playwright, ws_url: Optional[str] = None):
         """
         通过CDP连接到浏览器
         """
         try:
             # 获取正确的WebSocket URL
-            ws_url = await self._get_browser_websocket_url(self.debug_port)
+            if not ws_url:
+                if self.debug_port is None:
+                    raise RuntimeError("未提供CDP WebSocket URL，且调试端口未初始化")
+                ws_url = await self._get_browser_websocket_url(self.debug_port)
             utils.logger.info(f"[CDPBrowserManager] 正在通过CDP连接到浏览器: {ws_url}")
 
             # 使用Playwright的connectOverCDP方法连接

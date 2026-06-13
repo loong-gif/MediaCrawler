@@ -38,6 +38,7 @@ from .exception import DataFetchError
 from .field import SearchSortType
 from .help import parse_note_info_from_note_url, get_search_id
 from .login import XiaoHongShuLogin
+from tools.observability import tracer as otel_tracer
 
 
 class XiaoHongShuCrawler(AbstractCrawler):
@@ -159,7 +160,9 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
     async def search(self) -> None:
         """Search for notes and retrieve their comment information."""
-        utils.logger.info("[XiaoHongShuCrawler.search] Begin search xiaohongshu keywords")
+        with otel_tracer.start_as_current_span("xhs.search", attributes={"crawler.type": "search"}) as span:
+            span.set_attribute("keywords", config.KEYWORDS)
+            utils.logger.info("[XiaoHongShuCrawler.search] Begin search xiaohongshu keywords")
         xhs_limit_count = 20  # xhs limit page fixed value
         if config.CRAWLER_MAX_NOTES_COUNT < xhs_limit_count:
             config.CRAWLER_MAX_NOTES_COUNT = xhs_limit_count
@@ -218,7 +221,8 @@ class XiaoHongShuCrawler(AbstractCrawler):
 
     async def get_creators_and_notes(self) -> None:
         """Get creator's notes and retrieve their comment information."""
-        utils.logger.info("[XiaoHongShuCrawler.get_creators_and_notes] Begin get xiaohongshu creators")
+        with otel_tracer.start_as_current_span("xhs.get_creators_and_notes", attributes={"crawler.type": "creator"}):
+            utils.logger.info("[XiaoHongShuCrawler.get_creators_and_notes] Begin get xiaohongshu creators")
         for user_id in config.XHS_CREATOR_ID_LIST:
             # get creator detail info from web html content
             createor_info: Dict = await self.xhs_client.get_creator_info(user_id=user_id)
@@ -292,7 +296,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
         await self.batch_get_note_comments(need_get_comment_note_ids, xsec_tokens)
 
     async def get_note_detail_async_task(
-        self,
+        self,  # type: ignore[override]
         note_id: str,
         xsec_source: str,
         xsec_token: str,
@@ -311,6 +315,7 @@ class XiaoHongShuCrawler(AbstractCrawler):
         """
         note_detail = None
         async with semaphore:
+          with otel_tracer.start_as_current_span("xhs.get_note_detail", attributes={"note_id": note_id}) as span:
             try:
                 utils.logger.info(f"[get_note_detail_async_task] Begin get note detail, note_id: {note_id}")
 

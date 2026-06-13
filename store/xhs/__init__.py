@@ -19,6 +19,7 @@ from var import source_keyword_var
 
 from .xhs_store_media import *
 from ._store_impl import *
+from tools.observability import tracer as otel_tracer
 
 
 class XhsStoreFactory:
@@ -109,7 +110,8 @@ async def update_xhs_note(note_item: Dict):
         "xsec_token": note_item.get("xsec_token"),  # xsec_token
     }
     utils.logger.info(f"[store.xhs.update_xhs_note] xhs note: {local_db_item}")
-    await XhsStoreFactory.create_store().store_content(local_db_item)
+    with otel_tracer.start_as_current_span("store.xhs.update_note", attributes={"store.platform": "xhs", "store.operation": "update_note"}):
+        await XhsStoreFactory.create_store().store_content(local_db_item)
 
 
 async def batch_update_xhs_note_comments(note_id: str, comments: List[Dict]):
@@ -124,8 +126,9 @@ async def batch_update_xhs_note_comments(note_id: str, comments: List[Dict]):
     """
     if not comments:
         return
-    for comment_item in comments:
-        await update_xhs_note_comment(note_id, comment_item)
+    with otel_tracer.start_as_current_span("store.xhs.batch_update_comments", attributes={"store.platform": "xhs", "note_id": note_id}):
+        for comment_item in comments:
+            await update_xhs_note_comment(note_id, comment_item)
 
 
 async def update_xhs_note_comment(note_id: str, comment_item: Dict):
@@ -171,7 +174,8 @@ async def save_creator(user_id: str, creator: Dict):
     Returns:
 
     """
-    user_info = creator.get('basicInfo', {})
+    with otel_tracer.start_as_current_span("store.xhs.save_creator", attributes={"store.platform": "xhs", "user_id": user_id}):
+        user_info = creator.get('basicInfo', {})
 
     follows = 0
     fans = 0

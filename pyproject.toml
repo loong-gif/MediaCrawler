@@ -15,6 +15,7 @@ dependencies = [
     "cryptography>=45.0.7",
     "fastapi==0.110.2",
     "httpx==0.28.1",
+    "google-genai>=1.0.0",
     "jieba==0.42.1",
     "matplotlib==3.9.0",
     "opencv-python>=4.11.0.86",
@@ -26,12 +27,20 @@ dependencies = [
     "pyexecjs==1.5.1",
     "pyhumps>=3.8.0",
     "python-dotenv==1.0.1",
+    "tqdm>=4.66.0",
     "redis~=4.6.0",
     "requests==2.32.3",
     "sqlalchemy>=2.0.43",
     "tenacity==8.2.2",
     "uvicorn==0.29.0",
     "wordcloud==1.9.3",
+    "opentelemetry-api>=1.41.1",
+    "opentelemetry-sdk>=1.41.1",
+    "opentelemetry-exporter-otlp-proto-http>=1.41.1",
+    "opentelemetry-instrumentation-logging>=0.62b1",
+    "opentelemetry-instrumentation-fastapi>=0.62b1",
+    "opentelemetry-instrumentation-httpx>=0.62b1",
+    "opentelemetry-instrumentation-sqlalchemy>=0.62b1",
 ]
 
 [[tool.uv.index]]

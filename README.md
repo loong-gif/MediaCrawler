@@ -135,6 +135,13 @@ uv run main.py --platform xhs --lt qrcode --type detail
 
 # 其他平台爬虫使用示例，执行下面的命令查看
 uv run main.py --help
+
+# 微博创作者主页全量抓取示例（支持图片下载，保存到 Supabase）
+# 这里的 --weibo_creator_since_date 用来控制抓取起点；填 2010-01-01 就是尽量往前抓
+CDP_REMOTE_WS_URL=ws://127.0.0.1:9222/ \
+uv run main.py --platform wb --lt cookie --type creator --save_data_option supabase \
+  --creator_ids 7564215987,5124641655,2607803303,5372502779,5417332149 \
+  --weibo_creator_since_date 2010-01-01
 ```
 
 <details>
@@ -221,6 +228,19 @@ uv run main.py --init_db mysql
 # 使用 MySQL 存储数据（为适配历史更新，db参数进行沿用）
 uv run main.py --platform wb --lt cookie --type creator --save_data_option db
 ```
+
+### 同步微博导出到 Supabase
+
+如果你先把微博数据导出到本地文件，再想手动同步到 Supabase，可以直接运行：
+
+```shell
+uv run python tools/sync_weibo_exports_to_supabase.py --export-root output_files/2026-06-12/weibo
+```
+
+说明：
+- `--export-root` 填的是微博导出目录，目录下需要有 `csv/` 或 `json/` 子目录
+- 这个命令会同步 `weibo_creators`、`weibo_notes` 和 `weibo_images`
+- 运行前请确保已经用 `supabase` CLI 登录，并且当前仓库已经链接到目标项目
 
 
 [🚀 MediaCrawlerPro 重磅发布 🚀！更多的功能，更好的架构设计！](https://github.com/MediaCrawlerPro)

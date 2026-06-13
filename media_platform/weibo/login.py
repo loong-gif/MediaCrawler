@@ -16,6 +16,7 @@
 
 import asyncio
 import functools
+import json
 import sys
 from typing import Optional
 
@@ -114,10 +115,49 @@ class WeiboLogin(AbstractLogin):
 
     async def login_by_cookies(self):
         utils.logger.info("[WeiboLogin.login_by_qrcode] Begin login weibo by cookie ...")
-        for key, value in utils.convert_str_cookie_to_dict(self.cookie_str).items():
-            await self.browser_context.add_cookies([{
-                'name': key,
-                'value': value,
-                'domain': ".weibo.cn",
-                'path': "/"
-            }])
+        cookie_payload = self.cookie_str.strip()
+        if cookie_payload.startswith("["):
+            try:
+                cookies = json.loads(cookie_payload)
+                if not isinstance(cookies, list):
+                    raise ValueError("cookie JSON must be a list")
+                playwright_cookies = []
+                for cookie in cookies:
+                    if not isinstance(cookie, dict):
+                        continue
+                    name = cookie.get("name")
+                    value = cookie.get("value")
+                    domain = cookie.get("domain")
+                    path = cookie.get("path", "/")
+                    if not name or value is None or not domain:
+                        continue
+                    playwright_cookies.append({
+                        "name": name,
+                        "value": value,
+                        "domain": domain,
+                        "path": path,
+                        "httpOnly": bool(cookie.get("httpOnly", False)),
+                        "secure": bool(cookie.get("secure", True)),
+                    })
+                    if "weibo.com" in domain:
+                        playwright_cookies.append({
+                            "name": name,
+                            "value": value,
+                            "domain": ".weibo.cn",
+                            "path": path,
+                            "httpOnly": bool(cookie.get("httpOnly", False)),
+                            "secure": bool(cookie.get("secure", True)),
+                        })
+                if playwright_cookies:
+                    await self.browser_context.add_cookies(playwright_cookies)
+            except Exception as e:
+                utils.logger.error(f"[WeiboLogin.login_by_cookies] Parse cookie json failed: {e}")
+                sys.exit()
+        else:
+            for key, value in utils.convert_str_cookie_to_dict(self.cookie_str).items():
+                await self.browser_context.add_cookies([{
+                    'name': key,
+                    'value': value,
+                    'domain': ".weibo.cn",
+                    'path': "/"
+                }])

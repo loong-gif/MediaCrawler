@@ -17,7 +17,7 @@ import json
 import re
 import asyncio
 import pathlib
-from typing import List
+from typing import Dict, List, Union
 from urllib.parse import urlparse
 
 import httpx
@@ -29,6 +29,57 @@ from config import base_config
 
 from .weibo_store_media import *
 from ._store_impl import *
+
+
+WEIBO_MEDIA_DOWNLOAD_FILTER_ALL = "all"
+WEIBO_MEDIA_DOWNLOAD_FILTER_SELFIE_TRUE = "is_selfie_true"
+WEIBO_MEDIA_DOWNLOAD_FILTER_OPTIONS = {
+    WEIBO_MEDIA_DOWNLOAD_FILTER_ALL,
+    WEIBO_MEDIA_DOWNLOAD_FILTER_SELFIE_TRUE,
+}
+
+
+def get_weibo_media_download_filter() -> str:
+    download_filter = str(
+        getattr(base_config, "WEIBO_MEDIA_DOWNLOAD_FILTER", WEIBO_MEDIA_DOWNLOAD_FILTER_ALL)
+    ).strip().lower()
+    if download_filter not in WEIBO_MEDIA_DOWNLOAD_FILTER_OPTIONS:
+        raise ValueError(
+            "Invalid WEIBO_MEDIA_DOWNLOAD_FILTER. "
+            f"Expected one of {sorted(WEIBO_MEDIA_DOWNLOAD_FILTER_OPTIONS)}, got: {download_filter!r}"
+        )
+    return download_filter
+
+
+def sanitize_weibo_media_filename(filename: str, *, max_length: int = 200) -> str:
+    sanitized = re.sub(r"\s+", "_", str(filename or "").strip())
+    sanitized = re.sub(r'[<>:"/\\|?*]', "_", sanitized)
+    sanitized = re.sub(r"_+", "_", sanitized).strip("._")
+    if not sanitized:
+        sanitized = "unknown"
+    return sanitized[:max_length]
+
+
+def build_weibo_crawl_image_filename(
+    *,
+    nickname: str,
+    date_part: str,
+    content_part: str,
+    image_index: int,
+    image_count: int,
+) -> str:
+    filename_parts = [
+        sanitize_weibo_media_filename(nickname or "unknown"),
+        sanitize_weibo_media_filename(date_part or "unknown"),
+        sanitize_weibo_media_filename(content_part or "content"),
+    ]
+    if image_count > 1:
+        filename_parts.append(str(image_index))
+    return "_".join(filename_parts)
+
+
+def build_weibo_selfie_image_filename(*, note_id: Union[int, str], image_index: Union[int, str]) -> str:
+    return sanitize_weibo_media_filename(f"{note_id}_{image_index}")
 
 
 async def download_weibo_image(image_url: str, save_path: str, filename: str) -> bool:
@@ -53,14 +104,7 @@ async def download_weibo_image(image_url: str, save_path: str, filename: str) ->
         
         # 清理文件名中的非法字符
         # Windows文件名不能包含: < > : " / \ | ? *
-        illegal_chars = r'<>:"/\|?*'
-        clean_filename = filename
-        for char in illegal_chars:
-            clean_filename = clean_filename.replace(char, '_')
-        
-        # 限制文件名长度（Windows最大255字符，但为了安全限制为200）
-        if len(clean_filename) > 200:
-            clean_filename = clean_filename[:200]
+        clean_filename = sanitize_weibo_media_filename(filename)
         
         full_filename = f"{clean_filename}{ext}"
         filepath = pathlib.Path(save_path) / full_filename
@@ -105,6 +149,7 @@ class WeibostoreFactory:
         "db": WeiboDbStoreImplement,
         "json": WeiboJsonStoreImplement,
         "sqlite": WeiboSqliteStoreImplement,
+        "supabase": WeiboSupabaseStoreImplement,
     }
 
     @staticmethod
@@ -112,7 +157,7 @@ class WeibostoreFactory:
         import config
         store_class = WeibostoreFactory.STORES.get(config.SAVE_DATA_OPTION)
         if not store_class:
-            raise ValueError("[WeibotoreFactory.create_store] Invalid save option only supported csv or db or json or sqlite ...")
+            raise ValueError("[WeibotoreFactory.create_store] Invalid save option only supported csv or db or json or sqlite or supabase ...")
         return store_class()
 
 
@@ -127,8 +172,35 @@ async def batch_update_weibo_notes(note_list: List[Dict]):
     """
     if not note_list:
         return
+    utils.logger.info(
+        f"[store.weibo.batch_update_weibo_notes] received batch with {len(note_list)} notes"
+    )
+    stored_count = 0
+    failed_count = 0
+    first_error = None
     for note_item in note_list:
-        await update_weibo_note(note_item)
+        note_id = str((note_item.get("mblog") or {}).get("id", "")).strip()
+        try:
+            await update_weibo_note(note_item)
+            stored_count += 1
+        except Exception as exc:
+            failed_count += 1
+            if first_error is None:
+                first_error = exc
+            utils.logger.error(
+                f"[store.weibo.batch_update_weibo_notes] failed to store note_id={note_id or 'unknown'}, err={exc}"
+            )
+    summary = {
+        "received": len(note_list),
+        "stored": stored_count,
+        "failed": failed_count,
+    }
+    utils.logger.info(
+        f"[store.weibo.batch_update_weibo_notes] completed batch summary={summary}"
+    )
+    if stored_count == 0 and first_error is not None:
+        raise first_error
+    return summary
 
 
 async def update_weibo_note(note_item: Dict):
@@ -143,13 +215,19 @@ async def update_weibo_note(note_item: Dict):
     if not note_item:
         return
 
-    mblog: Dict = note_item.get("mblog")
-    user_info: Dict = mblog.get("user")
+    mblog = note_item.get("mblog") or {}
+    if not isinstance(mblog, dict):
+        raise ValueError("Invalid note item: missing mblog payload")
+    user_info = mblog.get("user") or {}
+    if not isinstance(user_info, dict):
+        user_info = {}
     note_id = mblog.get("id")
     # 确保 note_id 是整数类型（数据库字段是 BigInteger）
     note_id_int = int(note_id) if note_id else None
-    content_text = mblog.get("text")
-    clean_text = re.sub(r"<.*?>", "", content_text)
+    if note_id_int is None:
+        raise ValueError("Invalid note item: missing note_id")
+    content_text = mblog.get("text") or ""
+    clean_text = re.sub(r"<.*?>", "", str(content_text))
     
     # 提取图片链接列表
     image_list = []
@@ -237,6 +315,7 @@ async def update_weibo_note(note_item: Dict):
         # 微博信息
         "note_id": note_id_int,
         "content": clean_text,
+        "created_at": mblog.get("created_at", ""),
         "create_time": utils.rfc2822_to_timestamp(mblog.get("created_at")),
         "create_date_time": str(utils.rfc2822_to_china_datetime(mblog.get("created_at"))),
         "liked_count": str(mblog.get("attitudes_count", 0)),
@@ -255,6 +334,9 @@ async def update_weibo_note(note_item: Dict):
         "avatar": user_info.get("profile_image_url", ""),
         "source_keyword": source_keyword_var.get(),
     }
+    utils.logger.info(
+        f"[store.weibo.update_weibo_note] prepared note_id={note_id_int}, user_id={save_content_item['user_id']}, image_count={len(image_list)}"
+    )
     
     # 调试：确认 image_list 字段的值
     if image_list_str:
@@ -264,51 +346,57 @@ async def update_weibo_note(note_item: Dict):
     
     # 下载图片到本地
     if image_list and base_config.ENABLE_GET_MEIDAS:
-        image_store_path = "data/weibo/images"
-        utils.logger.info(f"[store.weibo.update_weibo_note] note_id: {note_id}, 开始下载 {len(image_list)} 张图片...")
-        
-        # 准备文件名组件
-        nickname = user_info.get("screen_name", "unknown")
-        # 从 create_date_time 提取日期部分 (格式: yyyy-MM-dd HH:mm:ss)
-        create_date_time_str = save_content_item.get("create_date_time", "")
-        date_part = ""
-        if create_date_time_str:
-            # 提取日期部分 (yyyy-MM-dd)
-            try:
-                date_part = create_date_time_str.split()[0]  # 取第一部分作为日期
-            except:
-                date_part = create_date_time_str[:10] if len(create_date_time_str) >= 10 else ""
-        
-        # 处理内容部分：取前30个字符，清理特殊字符
-        content_part = clean_text[:30] if clean_text else ""
-        # 清理内容中的特殊字符
-        content_part = re.sub(r'[<>:"/\|?*\n\r\t]', '_', content_part)
-        content_part = content_part.strip()
-        
-        # 串行下载图片（避免请求过快，每张图片之间等待）
-        success_count = 0
-        for idx, pic_url in enumerate(image_list):
-            # 生成文件名: nickname_date_content_index
-            if len(image_list) == 1:
-                # 只有一张图片，不需要索引
-                filename = f"{nickname}_{date_part}_{content_part}"
-            else:
-                # 多张图片，添加索引
-                filename = f"{nickname}_{date_part}_{content_part}_{idx + 1}"
-            
-            # 下载图片
-            result = await download_weibo_image(pic_url, image_store_path, filename)
-            if result:
-                success_count += 1
-            
-            # 每下载一张图片后等待一下，避免请求过快
-            if idx < len(image_list) - 1:  # 最后一张不需要等待
-                await asyncio.sleep(0.5)  # 等待0.5秒
-        
-        utils.logger.info(f"[store.weibo.update_weibo_note] note_id: {note_id}, 图片下载完成: {success_count}/{len(image_list)} 成功")
+        download_filter = get_weibo_media_download_filter()
+        if download_filter == WEIBO_MEDIA_DOWNLOAD_FILTER_SELFIE_TRUE:
+            utils.logger.info(
+                "[store.weibo.update_weibo_note] "
+                f"note_id: {note_id}, skip crawl-time download because "
+                f"WEIBO_MEDIA_DOWNLOAD_FILTER={download_filter}"
+            )
+        else:
+            image_store_path = "data/weibo/images"
+            utils.logger.info(f"[store.weibo.update_weibo_note] note_id: {note_id}, 开始下载 {len(image_list)} 张图片...")
+
+            # 准备文件名组件
+            nickname = user_info.get("screen_name", "unknown")
+            # 从 create_date_time 提取日期部分 (格式: yyyy-MM-dd HH:mm:ss)
+            create_date_time_str = save_content_item.get("create_date_time", "")
+            date_part = ""
+            if create_date_time_str:
+                try:
+                    date_part = create_date_time_str.split()[0]
+                except Exception:
+                    date_part = create_date_time_str[:10] if len(create_date_time_str) >= 10 else ""
+
+            content_part = clean_text[:30] if clean_text else ""
+
+            # 串行下载图片（避免请求过快，每张图片之间等待）
+            success_count = 0
+            for idx, pic_url in enumerate(image_list, start=1):
+                filename = build_weibo_crawl_image_filename(
+                    nickname=nickname,
+                    date_part=date_part,
+                    content_part=content_part,
+                    image_index=idx,
+                    image_count=len(image_list),
+                )
+
+                result = await download_weibo_image(pic_url, image_store_path, filename)
+                if result:
+                    success_count += 1
+
+                if idx < len(image_list):
+                    await asyncio.sleep(0.5)
+
+            utils.logger.info(
+                f"[store.weibo.update_weibo_note] note_id: {note_id}, 图片下载完成: {success_count}/{len(image_list)} 成功"
+            )
     
     utils.logger.info(f"[store.weibo.update_weibo_note] weibo note id:{note_id}, title:{save_content_item.get('content')[:24]} ...")
     await WeibostoreFactory.create_store().store_content(content_item=save_content_item)
+    utils.logger.info(
+        f"[store.weibo.update_weibo_note] stored note_id={note_id_int}, user_id={save_content_item['user_id']}"
+    )
 
 
 async def batch_update_weibo_note_comments(note_id: str, comments: List[Dict]):

@@ -15,6 +15,10 @@ import shutil
 import sys
 from typing import Optional
 
+# Initialise OpenTelemetry (traces, logs, metrics) before anything else
+from tools.observability import init_observability
+init_observability()
+
 import cmd_arg
 import config
 from database import db

@@ -19,13 +19,26 @@ from .time_util import *
 
 def init_loging_config():
     level = logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s %(name)s %(levelname)s (%(filename)s:%(lineno)d) - %(message)s",
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
     _logger = logging.getLogger("MediaCrawler")
     _logger.setLevel(level)
+    _logger.propagate = True
+
+    has_console_handler = any(
+        isinstance(handler, logging.StreamHandler)
+        and getattr(handler, "_mediacrawler_console", False)
+        for handler in _logger.handlers
+    )
+    if not has_console_handler:
+        console_handler = logging.StreamHandler()
+        console_handler._mediacrawler_console = True
+        console_handler.setLevel(level)
+        console_handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s %(name)s %(levelname)s (%(filename)s:%(lineno)d) - %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+            )
+        )
+        _logger.addHandler(console_handler)
     return _logger
 
 

@@ -10,6 +10,41 @@ from config.db_config import mysql_db_config, postgres_db_config, sqlite_db_conf
 _engines = {}
 
 
+async def _ensure_weibo_creator_note_count_column(conn, db_type: str):
+    if db_type == "sqlite":
+        result = await conn.execute(text("PRAGMA table_info(weibo_creator)"))
+        columns = [row[1] for row in result.fetchall()]
+        if "note_count" not in columns:
+            await conn.execute(text("ALTER TABLE weibo_creator ADD COLUMN note_count INTEGER NOT NULL DEFAULT 0"))
+    elif db_type == "mysql":
+        result = await conn.execute(
+            text(
+                "SELECT COUNT(*) FROM information_schema.columns "
+                "WHERE table_schema = :schema AND table_name = 'weibo_creator' AND column_name = 'note_count'"
+            ),
+            {"schema": mysql_db_config["db_name"]},
+        )
+        if result.scalar_one() == 0:
+            await conn.execute(text("ALTER TABLE weibo_creator ADD COLUMN note_count INT NOT NULL DEFAULT 0"))
+    elif db_type == "postgres" or db_type == "db":
+        result = await conn.execute(
+            text(
+                "SELECT COUNT(*) FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name = 'weibo_creator' AND column_name = 'note_count'"
+            )
+        )
+        if result.scalar_one() == 0:
+            await conn.execute(text("ALTER TABLE public.weibo_creator ADD COLUMN note_count INTEGER NOT NULL DEFAULT 0"))
+
+    await conn.execute(
+        text(
+            "UPDATE weibo_creator SET note_count = ("
+            "SELECT COUNT(*) FROM weibo_note WHERE weibo_note.user_id = weibo_creator.user_id"
+            ")"
+        )
+    )
+
+
 async def create_database_if_not_exists(db_type: str):
     """
     尝试创建数据库（如果不存在）。
@@ -102,6 +137,7 @@ async def create_tables(db_type: str = None):
     if engine:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await _ensure_weibo_creator_note_count_column(conn, db_type)
 
 
 # Track if tables have been created to avoid repeated checks
@@ -124,6 +160,7 @@ async def get_session() -> AsyncSession:
         try:
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
+                await _ensure_weibo_creator_note_count_column(conn, db_type)
             _tables_created.add(db_type)
         except Exception as e:
             # If table creation fails, log but continue (tables might already exist)
