@@ -83,10 +83,16 @@ class WeiboClient(ProxyRefreshMixin):
             data: Dict = response.json()
         except json.decoder.JSONDecodeError:
             # issue: #771 Search API returns error 432, retry multiple times + update h5 cookies
-            utils.logger.error(f"[WeiboClient.request] request {method}:{url} err code: {response.status_code} res:{response.text}")
+            utils.logger.error(f"[WeiboClient.request] {method} {url} failed with status {response.status_code}, response: {response.text}")
+            if response.status_code == 400 and "Cookie Too Large" in response.text:
+                # Accumulated cookies exceed the server's header size limit; clear them so
+                # the subsequent page navigation can obtain a fresh, minimal cookie set.
+                utils.logger.warning("[WeiboClient.request] Detected oversized cookies; clearing browser cookies before refresh")
+                await self.playwright_page.context.clear_cookies()
             await self.playwright_page.goto(self._host)
             await asyncio.sleep(2)
-            await self.update_cookies(browser_context=self.playwright_page.context)
+            # Filter to only m.weibo.cn cookies to avoid re-accumulating unrelated domain cookies
+            await self.update_cookies(browser_context=self.playwright_page.context, urls=[self._host])
             raise DataFetchError(f"get response code error: {response.status_code}")
 
         ok_code = data.get("ok")

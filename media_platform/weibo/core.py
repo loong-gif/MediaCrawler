@@ -307,12 +307,17 @@ class WeiboCrawler(AbstractCrawler):
         """
         utils.logger.info("[WeiboCrawler.get_creators_and_notes] Begin get weibo creators")
         for user_id in config.WEIBO_CREATOR_ID_LIST:
-            createor_info_res: Dict = await self.wb_client.get_creator_info_by_id(creator_id=user_id)
+            try:
+                createor_info_res: Dict = await self.wb_client.get_creator_info_by_id(creator_id=user_id)
+            except Exception as e:
+                utils.logger.error(f"[WeiboCrawler.get_creators_and_notes] creator fetch failed, creator_id:{user_id}, err:{e}")
+                continue
             if createor_info_res:
                 createor_info: Dict = createor_info_res.get("userInfo", {})
                 utils.logger.info(f"[WeiboCrawler.get_creators_and_notes] creator info: {createor_info}")
                 if not createor_info:
-                    raise DataFetchError("Get creator info error")
+                    utils.logger.error(f"[WeiboCrawler.get_creators_and_notes] empty userInfo for creator_id:{user_id}, skipping")
+                    continue
                 await weibo_store.save_creator(user_id, user_info=createor_info)
 
                 # Create a wrapper callback to get full text before saving data
