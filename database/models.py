@@ -163,7 +163,7 @@ class DouyinAwemeComment(Base):
 class DyCreator(Base):
     __tablename__ = 'dy_creator'
     id = Column(Integer, primary_key=True)
-    user_id = Column(String(255))
+    user_id = Column(String(255), unique=True, index=True)
     nickname = Column(Text)
     avatar = Column(Text)
     ip_location = Column(Text)
@@ -254,7 +254,7 @@ class WeiboNoteComment(Base):
 class WeiboCreator(Base):
     __tablename__ = 'weibo_creator'
     id = Column(Integer, primary_key=True)
-    user_id = Column(String(255))
+    user_id = Column(String(255), unique=True, index=True)
     nickname = Column(Text)
     avatar = Column(Text)
     ip_location = Column(Text)
@@ -269,7 +269,7 @@ class WeiboCreator(Base):
 class XhsCreator(Base):
     __tablename__ = 'xhs_creator'
     id = Column(Integer, primary_key=True)
-    user_id = Column(String(255))
+    user_id = Column(String(255), unique=True, index=True)
     nickname = Column(Text)
     avatar = Column(Text)
     ip_location = Column(Text)
@@ -370,7 +370,7 @@ class TiebaComment(Base):
 class TiebaCreator(Base):
     __tablename__ = 'tieba_creator'
     id = Column(Integer, primary_key=True)
-    user_id = Column(String(64))
+    user_id = Column(String(64), unique=True, index=True)
     user_name = Column(Text)
     nickname = Column(Text)
     avatar = Column(Text)
