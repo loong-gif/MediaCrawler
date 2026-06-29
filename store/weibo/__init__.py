@@ -123,11 +123,14 @@ async def download_weibo_image(image_url: str, save_path: str, filename: str) ->
             pass
         
         async with httpx.AsyncClient(proxy=proxy, timeout=30.0, follow_redirects=True) as client:
-            # 设置请求头，模拟浏览器
+            # 设置请求头，模拟浏览器，并携带 Weibo 会话 Cookie 以访问受限资源（如 livephoto）
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                 "Referer": "https://weibo.com/",
             }
+            cookie_str = getattr(base_config, "COOKIES", "")
+            if cookie_str:
+                headers["Cookie"] = cookie_str
             response = await client.get(image_url, headers=headers)
             response.raise_for_status()
             
@@ -137,7 +140,16 @@ async def download_weibo_image(image_url: str, save_path: str, filename: str) ->
             
             utils.logger.info(f"[store.weibo.download_weibo_image] 下载成功: {full_filename}")
             return True
-            
+
+    except httpx.HTTPStatusError as e:
+        status_code = e.response.status_code
+        if 400 <= status_code < 500:
+            # 4xx 表示 CDN 拒绝访问或资源不存在（如 403 live-photo 鉴权失败、404 HEIC 无大图），
+            # 属于预期的外部限制，用 WARN 记录，不触发告警。
+            utils.logger.warning(f"[store.weibo.download_weibo_image] 下载失败 {image_url}: {e}")
+        else:
+            utils.logger.error(f"[store.weibo.download_weibo_image] 下载失败 {image_url}: {e}")
+        return False
     except Exception as e:
         utils.logger.error(f"[store.weibo.download_weibo_image] 下载失败 {image_url}: {e}")
         return False
