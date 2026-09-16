@@ -391,7 +391,14 @@ class WeiboClient(ProxyRefreshMixin):
         since_id = ""
         crawler_total_count = 0
         while notes_has_more:
-            notes_res = await self.get_notes_by_creator(creator_id, container_id, since_id)
+            try:
+                notes_res = await self.get_notes_by_creator(creator_id, container_id, since_id)
+            except httpx.ReadTimeout:
+                utils.logger.error(
+                    f"[WeiboClient.get_all_notes_by_creator_id] ReadTimeout fetching notes for creator "
+                    f"{creator_id} (since_id={since_id}), stopping pagination with {len(result)} notes collected so far"
+                )
+                break
             if not notes_res:
                 utils.logger.error(f"[WeiboClient.get_notes_by_creator] The current creator may have been banned by Weibo, so they cannot access the data.")
                 break
